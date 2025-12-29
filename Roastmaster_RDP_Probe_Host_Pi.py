@@ -1,3 +1,4 @@
+import os
 import time
 import socket
 import struct
@@ -177,6 +178,7 @@ class ProbeHost:
         msg_bytes = json.dumps(datagram).encode('utf-8')
         
         print(f"Sending SYN to {MULTICAST_GROUP}:{SERVER_PORT}")
+        self.write_web_log(datagram)
         self.sock.sendto(msg_bytes, (MULTICAST_GROUP, SERVER_PORT))
         
         self.send_count += 1
@@ -237,6 +239,7 @@ class ProbeHost:
 
         if self.server_address:
             # print(f"Sending Temps to {self.server_address}")
+            self.write_web_log(datagram)
             self.sock.sendto(msg_bytes, self.server_address)
             self.send_count += 1
         
@@ -263,6 +266,22 @@ class ProbeHost:
             
             # Tiny sleep to prevent 100% CPU usage
             time.sleep(0.01)
+
+    def write_web_log(self, datagram):
+        # path to your apache web root
+        file_path = "/var/www/html/rdp_packet.json"
+
+        # Add a local timestamp for the web display
+        datagram['LocalTimestamp'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+
+        try:
+            # Write temporary file then rename to avoid read conflicts
+            temp_path = file_path + ".tmp"
+            with open(temp_path, 'w') as f:
+                json.dump(datagram, f)
+            os.replace(temp_path, file_path)
+        except Exception as e:
+            print(f"Web Log Error: {e}")
 
 # ==============================================================================
 # ================================= MAIN =======================================
