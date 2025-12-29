@@ -1,53 +1,39 @@
-import os
 import time
 import socket
 import struct
 import json
+import os
 import board
+import busio
 import digitalio
-import adafruit_max31855
-import adafruit_bitbangio as bitbangio  # <--- UPDATED IMPORT
+import adafruit_mcp9600
 
 # ==============================================================================
 # ============================== CONFIGURATION =================================
 # ==============================================================================
 
 # Network Configuration
-# WiFi Connection is handled by the Raspberry Pi OS (wpa_supplicant).
-# Ensure your Pi is connected to the same network as the Roastmaster device.
-
-# The Serial Number for this host (Must match Roastmaster Probe definition)
-HOST_SERIAL = "424242"
-
-# The port set in the Roastmaster Probe definition (Standard is 5050)
+HOST_SERIAL = "My Probe Host"
 SERVER_PORT = 5050
-
-# Multicast Address for discovery (Standard RDP)
 MULTICAST_GROUP = '224.0.0.1'
 
 # Timers (in seconds)
 SYNC_SEND_RATE = 2.0
 TEMP_SEND_RATE = 1.0
 
-# GPIO Pin Definitions (BCM Numbering)
-# Update these to match your wiring on the Raspberry Pi Zero 2 W
-# Example: CLK=Pin 11 (GPIO17), CS=Pin 24 (GPIO8), DO=Pin 21 (GPIO9)
-PIN_CLK = board.D17
-PIN_CS  = board.D8
-PIN_DO  = board.D9
-
 # Status LED Pin (Optional)
-# Set to None if not using an LED.
 STATUS_LED_PIN = board.D2
 STATUS_LED_ACTIVE_LOW = True 
+
+# I2C Configuration
+# I2C uses fixed pins on the Pi: GPIO 2 (SDA) and GPIO 3 (SCL).
+# No manual pin definition needed for I2C initialization in CircuitPython.
 
 # ==============================================================================
 # ============================ RDP PROTOCOL CONSTANTS ==========================
 # ==============================================================================
 
 RDP_VERSION_1_0 = "RDP_1.0"
-
-# Keys
 KEY_VERSION = "RPVersion"
 KEY_SERIAL = "RPSerial"
 KEY_EPOCH = "RPEpoch"
@@ -56,7 +42,6 @@ KEY_EVENT_TYPE = "RPEventType"
 KEY_CHANNEL = "RPChannel"
 KEY_VALUE = "RPValue"
 
-# Event Types
 EVENT_SYN = 1
 EVENT_ACK = 2
 EVENT_TEMP = 3
@@ -72,7 +57,7 @@ class HostState:
 class ProbeHost:
     def __init__(self):
         self.state = HostState.SEARCHING
-        self.send_count = 0  # Epoch
+        self.send_count = 0 
         self.server_address = None
         self.last_sync_time = 0
         self.last_temp_time = 0
@@ -86,43 +71,40 @@ class ProbeHost:
 
         # Initialize UDP Socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        
-        # Allow reuse of address
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        
-        # Set Multicast TTL to 1 (local network only)
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack('b', 1))
-        
-        # Bind to the port to listen for ACKs
-        # We bind to '' to listen on all interfaces
         self.sock.bind(('', SERVER_PORT))
-        
-        # Set non-blocking so we don't hang waiting for packets
         self.sock.setblocking(False)
 
-        # Initialize Sensor (MAX31855) via Software SPI
-        # RDP supports up to 16 channels, you can add more sensor objects to this list
+        # Initialize Sensor (MCP9600) via I2C
         self.probes = []
         try:
-            # UPDATED: Use the Linux-compatible bitbangio library
-            spi = bitbangio.SPI(PIN_CLK, MOSI=None, MISO=PIN_DO)
-            cs = digitalio.DigitalInOut(PIN_CS)
-            sensor = adafruit_max31855.MAX31855(spi, cs)
+            # Initialize I2C bus (SCL=GPIO3, SDA=GPIO2)
+            i2c = board.I2C() 
             
+            # Initialize MCP9600
+            # Default address is 0x67. Change address=0x66 etc if you bridged pads.
+            mcp = adafruit_mcp9600.MCP9600(i2c)
+            
+            # Optional: Set thermocouple type (Default is K)
+            # mcp.thermocouple_type = "K" 
+
             self.probes.append({
-                "channel": 1, # Roastmaster Channel ID
-                "handle": sensor,
+                "channel": 1, 
+                "handle": mcp,
                 "temp": None,
                 "error": False
             })
-            print(f"Initialized Probe on Channel 1")
+            print(f"Initialized MCP9600 Probe on Channel 1 (I2C)")
+            
+        except ValueError as e:
+            print(f"I2C Error: {e}")
+            print("Did you enable I2C in raspi-config?")
         except Exception as e:
-            print(f"Error initializing SPI/Sensor: {e}")
-            print("Ensure wiring is correct and adafruit-circuitpython-bitbangio is installed.")
+            print(f"Error initializing Sensor: {e}")
 
     def set_led(self, on):
         if not self.led: return
-        # Handle Active Low logic
         if STATUS_LED_ACTIVE_LOW:
             self.led.value = not on
         else:
@@ -136,78 +118,85 @@ class ProbeHost:
             self.set_led(False)
             time.sleep(duration)
 
+    def write_web_log(self, datagram):
+        """Writes current packet to JSON for the Apache web monitor"""
+        file_path = "/var/www/html/rdp_packet.json"
+        
+        # Add a local timestamp for the web display
+        # We copy the dict to avoid modifying the one sent over UDP
+        log_data = datagram.copy()
+        log_data['LocalTimestamp'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+        
+        try:
+            temp_path = file_path + ".tmp"
+            with open(temp_path, 'w') as f:
+                json.dump(log_data, f)
+            os.replace(temp_path, file_path)
+        except Exception as e:
+            # Silent fail to avoid spamming console if web folder permission is wrong
+            pass
+
     def read_incoming(self):
         try:
             data, addr = self.sock.recvfrom(1024)
             message = data.decode('utf-8')
-            
             try:
                 packet = json.loads(message)
             except json.JSONDecodeError:
-                return # Ignore non-JSON packets
+                return 
 
-            # Check for ACK
             if (packet.get(KEY_VERSION) == RDP_VERSION_1_0 and 
                 packet.get(KEY_SERIAL) == HOST_SERIAL and 
-                packet.get(KEY_EVENT_TYPE) == str(EVENT_ACK)): # JSON values sometimes come as strings
+                packet.get(KEY_EVENT_TYPE) == str(EVENT_ACK)):
                 
                 print(f"Received ACK from Server at {addr[0]}")
                 self.server_address = (addr[0], SERVER_PORT)
                 self.state = HostState.CONNECTED
-                
-                # Reset timers to send immediately
                 self.last_temp_time = 0
                 
         except BlockingIOError:
-            pass # No data available
+            pass 
 
     def send_syn(self):
-        # Construct Payload
-        payload_array = [{
-            KEY_EVENT_TYPE: EVENT_SYN
-        }]
+        payload_array = [{ KEY_EVENT_TYPE: EVENT_SYN }]
         
-        # Construct Datagram
         datagram = {
             KEY_VERSION: RDP_VERSION_1_0,
             KEY_SERIAL: HOST_SERIAL,
             KEY_EPOCH: self.send_count,
-            KEY_PAYLOAD: json.dumps(payload_array) # RDP expects payload as a serialized JSON string
+            KEY_PAYLOAD: json.dumps(payload_array)
         }
         
         msg_bytes = json.dumps(datagram).encode('utf-8')
         
         print(f"Sending SYN to {MULTICAST_GROUP}:{SERVER_PORT}")
-        self.write_web_log(datagram)
-        self.sock.sendto(msg_bytes, (MULTICAST_GROUP, SERVER_PORT))
         
+        # Write to web log
+        self.write_web_log(datagram)
+        
+        self.sock.sendto(msg_bytes, (MULTICAST_GROUP, SERVER_PORT))
         self.send_count += 1
-        self.blink_led(2) # 2 Blinks for SYN
+        self.blink_led(2)
 
     def read_probes(self):
-        # Read all probes
         for p in self.probes:
             try:
-                # The Adafruit library handles linearization automatically
+                # MCP9600 reading
                 temp_c = p["handle"].temperature
                 p["temp"] = temp_c
                 p["error"] = False
-            except RuntimeError as e:
-                # Usually means open circuit or short to ground
+            except Exception as e:
                 print(f"Probe Error on Ch {p['channel']}: {e}")
                 p["temp"] = None
                 p["error"] = True
-                self.blink_led(5, 0.05) # Fast 5 blinks for error
+                self.blink_led(5, 0.05)
 
     def send_temps(self):
-        self.set_led(True) # LED on during read/transmit
-        
+        self.set_led(True)
         self.read_probes()
         
         payload_list = []
-        
         for p in self.probes:
-            # Logic: Send if good read, or if we are configured to transmit errors (transmitOnReadError=True)
             if not p["error"] or True: 
                 val_str = "null"
                 if p["temp"] is not None:
@@ -216,42 +205,37 @@ class ProbeHost:
                 event = {
                     KEY_EVENT_TYPE: EVENT_TEMP,
                     KEY_CHANNEL: p["channel"],
-                    KEY_VALUE: val_str # RDP expects string values for temps
+                    KEY_VALUE: val_str
                 }
-                
                 payload_list.append(event)
 
         if not payload_list:
             self.set_led(False)
             return
 
-        # RDP requires the payload to be a stringified JSON array
-        payload_str = json.dumps(payload_list)
-
         datagram = {
             KEY_VERSION: RDP_VERSION_1_0,
             KEY_SERIAL: HOST_SERIAL,
             KEY_EPOCH: self.send_count,
-            KEY_PAYLOAD: payload_str 
+            KEY_PAYLOAD: json.dumps(payload_list) 
         }
 
         msg_bytes = json.dumps(datagram).encode('utf-8')
 
+        # Write to web log
+        self.write_web_log(datagram)
+
         if self.server_address:
-            # print(f"Sending Temps to {self.server_address}")
-            self.write_web_log(datagram)
             self.sock.sendto(msg_bytes, self.server_address)
             self.send_count += 1
         
         self.set_led(False)
 
     def run(self):
-        print(f"Roastmaster RDP Host Started. Serial: {HOST_SERIAL}")
+        print(f"Roastmaster RDP Host Started (MCP9600 I2C). Serial: {HOST_SERIAL}")
         
         while True:
             current_time = time.monotonic()
-            
-            # Check for network data (ACKs)
             self.read_incoming()
 
             if self.state == HostState.SEARCHING:
@@ -264,24 +248,7 @@ class ProbeHost:
                     self.send_temps()
                     self.last_temp_time = current_time
             
-            # Tiny sleep to prevent 100% CPU usage
             time.sleep(0.01)
-
-    def write_web_log(self, datagram):
-        # path to your apache web root
-        file_path = "/var/www/html/rdp_packet.json"
-
-        # Add a local timestamp for the web display
-        datagram['LocalTimestamp'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-
-        try:
-            # Write temporary file then rename to avoid read conflicts
-            temp_path = file_path + ".tmp"
-            with open(temp_path, 'w') as f:
-                json.dump(datagram, f)
-            os.replace(temp_path, file_path)
-        except Exception as e:
-            print(f"Web Log Error: {e}")
 
 # ==============================================================================
 # ================================= MAIN =======================================
