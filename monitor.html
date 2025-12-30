@@ -13,15 +13,12 @@
         .stat-box { background: #111; padding: 10px; border: 1px solid #333; }
         .label { color: #888; font-size: 0.8em; display: block; margin-bottom: 5px; }
         .value { font-weight: bold; color: #fff; font-size: 1.1em; }
+        .sub-value { font-size: 0.8em; color: #666; display: block; margin-top: 3px; }
         
         pre { background: #111; padding: 15px; border: 1px solid #333; white-space: pre-wrap; word-wrap: break-word; color: #dcdcdc; }
         
         .status-dot { height: 12px; width: 12px; background-color: #555; border-radius: 50%; display: inline-block; margin-right: 10px; }
         .active { background-color: #00ff00; box-shadow: 0 0 8px #00ff00; transition: background-color 0.1s; }
-        
-        .highlight { color: #569cd6; } /* JSON Key Color */
-        .string { color: #ce9178; }    /* JSON String Color */
-        .number { color: #b5cea8; }    /* JSON Number Color */
     </style>
 </head>
 <body>
@@ -35,68 +32,107 @@
             <span id="serial" class="value">Waiting...</span>
         </div>
         <div class="stat-box">
-            <span class="label">Epoch ID</span>
-            <span id="epoch" class="value">--</span>
+            <span class="label">Packet Epoch (Time)</span>
+            <span id="epochTime" class="value">--:--:--</span>
+            <span id="epochRaw" class="sub-value">Raw: --</span>
         </div>
         <div class="stat-box">
             <span class="label">Event Type</span>
             <span id="eventType" class="value">--</span>
         </div>
         <div class="stat-box">
-            <span class="label">Data Streams</span>
-            <span id="streamCount" class="value">--</span>
+            <span class="label">Active Sensors</span>
+            <span id="sensorInfo" class="value">--</span>
         </div>
     </div>
 
-    <h3>Live Datagram (Formatted)</h3>
+    <h3>Live Datagram (Decoded)</h3>
     <pre id="rawPayload">Waiting for data...</pre>
 </div>
 
 <script>
     const EVENT_TYPES = { 1: "SYN (Handshake)", 2: "ACK (Response)", 3: "TEMP (Data)" };
+    
+    // Map MetaType IDs to Human Readable Names
     const META_TYPES = { 
-        3000: "Bean Temp", 3001: "Env Temp", 3002: "Max Env Temp", 
+        3000: "Bean Temp", 3001: "Env Temp", 3002: "Max Env", 
         3004: "Exhaust", 3005: "Ambient", 3006: "Cooling" 
     };
 
     async function updateData() {
         try {
-            // Fetch the compact JSON file with a cache-busting parameter
+            // Fetch the JSON file with a cache-busting timestamp
             const response = await fetch('rdp_packet.json?nocache=' + new Date().getTime());
             
             if (!response.ok) throw new Error("File not found");
             
-            const data = await response.json();
+            const rawData = await response.json();
 
-            // Update Header Info
-            document.getElementById('serial').textContent = data.RPSerial || "Unknown";
-            document.getElementById('epoch').textContent = data.RPEpoch ? data.RPEpoch.toFixed(3) : "--";
+            // 1. UPDATE SERIAL
+            document.getElementById('serial').textContent = rawData.RPSerial || "Unknown";
             
-            // Analyze Payload
-            let typeStr = "Unknown";
-            let streamCount = 0;
+            // 2. UPDATE EPOCH (Handle Unix Timestamp)
+            if (rawData.RPEpoch) {
+                // Convert Unix Timestamp (Seconds) to JS Date (Milliseconds)
+                const dateObj = new Date(rawData.RPEpoch * 1000);
+                document.getElementById('epochTime').textContent = dateObj.toLocaleTimeString();
+                document.getElementById('epochRaw').textContent = "Raw: " + rawData.RPEpoch.toFixed(3);
+            }
 
-            if (Array.isArray(data.RPPayload) && data.RPPayload.length > 0) {
-                // Determine Event Type from the first item in the payload array
-                const typeCode = data.RPPayload[0].RPEventType;
+            // 3. DECODE PAYLOAD (Handle Double-Encoding)
+            let finalPayload = rawData.RPPayload;
+            let streamCount = 0;
+            let typeStr = "Unknown";
+            let activeSensors = [];
+
+            // If the payload comes in as a string (Double Encoded), parse it!
+            if (typeof rawData.RPPayload === 'string') {
+                try {
+                    finalPayload = JSON.parse(rawData.RPPayload);
+                } catch (e) {
+                    finalPayload = "[Error Parsing Payload String]";
+                }
+            }
+
+            // Analyze the decoded payload
+            if (Array.isArray(finalPayload) && finalPayload.length > 0) {
+                // Get Event Type from first item
+                const typeCode = finalPayload[0].RPEventType;
                 typeStr = EVENT_TYPES[typeCode] || ("Type " + typeCode);
-                streamCount = data.RPPayload.length;
+                streamCount = finalPayload.length;
+
+                // Collect Sensor Names from MetaTypes
+                finalPayload.forEach(item => {
+                    if (item.RPMetaType && META_TYPES[item.RPMetaType]) {
+                        activeSensors.push(META_TYPES[item.RPMetaType]);
+                    }
+                });
             }
 
             document.getElementById('eventType').textContent = typeStr;
-            document.getElementById('streamCount').textContent = streamCount;
+            
+            // Show count or list of specific sensors found
+            if (activeSensors.length > 0) {
+                document.getElementById('sensorInfo').textContent = activeSensors.join(", ");
+                document.getElementById('sensorInfo').style.fontSize = "0.9em"; // shrink if list is long
+            } else {
+                 document.getElementById('sensorInfo').textContent = streamCount + " Streams";
+                 document.getElementById('sensorInfo').style.fontSize = "1.1em";
+            }
 
-            // PRETTY PRINT: Convert the compact object back to a formatted string with 4-space indentation
-            document.getElementById('rawPayload').textContent = JSON.stringify(data, null, 4);
+            // 4. PRETTY PRINT THE FULL PACKET
+            // We construct a clean object so the viewer sees the DECODED structure
+            const displayObj = { ...rawData, RPPayload: finalPayload };
+            document.getElementById('rawPayload').textContent = JSON.stringify(displayObj, null, 4);
 
-            // Blink effect to show activity
+            // Blink effect
             const dot = document.getElementById('activity');
             dot.classList.add('active');
             setTimeout(() => dot.classList.remove('active'), 200);
 
         } catch (error) {
             console.error('Error fetching data:', error);
-            document.getElementById('rawPayload').textContent = "Error: " + error.message;
+            // Don't overwrite the screen on every error to avoid flickering if one poll fails
         }
     }
 
