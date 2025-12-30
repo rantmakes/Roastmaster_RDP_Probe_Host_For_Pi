@@ -22,5 +22,7 @@ Python code is currently in development and is in the develop branch of this for
 ## Acknowledgements
 
 Danny Hall (Rainfrog, Inc.) - Thanks for all the support and amazing launching point!
+
 Evan Graham - Thanks for your incredibly imaginative solution to a seemingly insurmountable enigma by developing the first working prototype for getting digital readings from a rotating Gene Cafe drum
+
 Robert Swift - Thanks for your impetus, vision and code prototyping
