@@ -8,7 +8,7 @@ This is a fork from the "pre-release" software for beta testers of Roastmaster f
 
 Roastmaster is coffee roasting toolkit and data logging software, in which users can log temperature data during their coffee roasting sessions. This logging can be done either manually or via separate electronic thermocouple reading "clients".
 
-[cite_start]The RDP Protocol is an OpenSource communications protocol created by Rainfrog, Inc. for the purpose of standardizing the transmission of roasting information to Roastmaster[cite: 5].
+The RDP Protocol is an OpenSource communications protocol created by Rainfrog, Inc. for the purpose of standardizing the transmission of roasting information to Roastmaster.
 
 This implementation supports multiple sensor types simultaneously, specifically handling the **MCP9600** (Thermocouple Amplifier) via Hardware I2C and the **SCD-41** (CO2, Temp, Humidity) via Software I2C.
 
@@ -17,17 +17,17 @@ This implementation supports multiple sensor types simultaneously, specifically 
 * **Python 3 Implementation:** Runs on standard Linux distributions (Raspberry Pi OS).
 * **Multi-Sensor Support:** Currently configured for MCP9600 (Thermocouple) and SCD-41 (CO2/Environmental).
 * **Web Monitor:** Includes a local JSON logger to visualize packets via a local Apache web server.
-* [cite_start]**Handles Handshaking:** Manages SYN/ACK handshaking with Roastmaster[cite: 10].
-* [cite_start]**Unlimited Sensors:** Hosts multiple sensors, each sending on a unique channel (RDP supports 16)[cite: 10].
-* [cite_start]**Packet Ordering:** Supports RDP "Epoch" values to ensure correct packet ordering over UDP[cite: 11].
+* **Handles Handshaking:** Manages SYN/ACK handshaking with Roastmaster.
+* **Unlimited Sensors:** Hosts multiple sensors, each sending on a unique channel (RDP supports 16).
+* **Packet Ordering:** Supports RDP "Epoch" values to ensure correct packet ordering over UDP.
 
 ## RDP Protocol Features
 
-* [cite_start]Operates over the easy-to-use User Datagram Protocol (UDP)[cite: 10].
-* [cite_start]Lightweight, consuming very little network bandwidth[cite: 10].
-* [cite_start]Server is multicast discoverable (224.0.0.1)[cite: 10].
-* [cite_start]Supports basic handshaking (SYN/ACK), simulating a "connection"[cite: 10].
-* [cite_start]Data format is compact, human-readable JSON[cite: 11].
+* Operates over the easy-to-use User Datagram Protocol (UDP).
+* Lightweight, consuming very little network bandwidth.
+* Server is multicast discoverable (224.0.0.1).
+* Supports basic handshaking (SYN/ACK), simulating a "connection".
+* Data format is compact, human-readable JSON.
 
 ## Hardware Requirements
 
@@ -79,7 +79,8 @@ Place monitor.html in /var/www/html/.
 
 Navigate to http://<your-pi-ip>/monitor.html in a browser.
 
-RDP Channel Mapping
+## RDP Channel Mapping
+
 This implementation maps the sensors to the following RDP Channels. You must configure Roastmaster "Curves" to listen to these specific channels:
 
 Channel 1: Bean Temp (MCP9600 Thermocouple) - RPMetaType: 3000 (BT Temp) 
@@ -92,27 +93,18 @@ Channel 4: CO2 (SCD-41 PPM) - RPMetaType: 3002 (MET Temp)
 
 Note: Humidity and CO2 are sent as "Temperature" events (RPEventType: 3) so that Roastmaster can graph them as curves.
 
-Resources
+## Resources
+
 MCP9600 Library: https://docs.circuitpython.org/projects/mcp9600/en/latest/
 
 SCD-41 Library: https://docs.circuitpython.org/projects/scd4x/en/latest/
 
 RDP Protocol Datasheet: Included in repository.
 
-Acknowledgements
-Danny Hall (Rainfrog, Inc.): For the original RDP protocol and Arduino implementation.
+## Acknowledgements
 
-Evan Graham: For the original digital reading prototype.
+* Danny Hall (Rainfrog, Inc.): For the original RDP protocol and Arduino implementation.
 
-Robert Swift: For impetus, vision, and code prototyping.
+* Evan Graham: For the original digital reading prototype.
 
-License
-MIT License
-
-Copyright (c) 2016 Rainfrog, Inc. Written by Danny Hall, for Rainfrog, Inc., modified by Rich Anthony. Based on the prototyping of Robert Swift and input from countless Roastmaster users.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+* Robert Swift: For impetus, vision, and code prototyping.
